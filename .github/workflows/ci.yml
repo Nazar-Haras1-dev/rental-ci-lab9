@@ -1,0 +1,188 @@
+# Лаба 9. CI для SUT B «Прокат обладнання», варіант 03.
+# Pipeline: build -> unit -> integration / api / regression (останні три паралельно, після unit).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  DB_HOST: 127.0.0.1
+  DB_PORT: "5432"
+  DB_NAME: rental_variant03_test
+  DB_USER: rental_student
+  DB_PASSWORD: student
+
+jobs:
+  build:
+    name: build (залежності й імпорт)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: Встановити залежності
+        run: python -m pip install -r requirements-ci.txt
+      - name: Перевірити, що застосунок імпортується
+        run: python -c "import rental.service, rental.api; print('import OK')"
+
+  unit:
+    name: unit (без БД)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Запустити unit-тести
+        run: python -m pytest tests/test_service_unit.py tests/test_environment.py -v --junitxml=reports/unit.xml
+      - name: Підсумок у Job Summary
+        if: always()
+        run: python ci/junit_summary.py "Unit-тести" reports/unit.xml
+      - name: Зберегти JUnit-звіт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-unit
+          path: reports/unit.xml
+          if-no-files-found: warn
+
+  integration:
+    name: integration (PostgreSQL)
+    needs: unit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: rental_student
+          POSTGRES_PASSWORD: student
+          POSTGRES_DB: rental_variant03_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rental_student -d rental_variant03_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Застосувати міграцію
+        run: python ci/apply_migration.py
+      - name: Запустити integration-тести
+        run: python -m pytest tests/integration -v --junitxml=reports/integration.xml
+      - name: Підсумок у Job Summary
+        if: always()
+        run: python ci/junit_summary.py "Integration-тести" reports/integration.xml
+      - name: Зберегти JUnit-звіт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-integration
+          path: reports/integration.xml
+          if-no-files-found: warn
+
+  api:
+    name: api (REST + PostgreSQL)
+    needs: unit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: rental_student
+          POSTGRES_PASSWORD: student
+          POSTGRES_DB: rental_variant03_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rental_student -d rental_variant03_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Застосувати міграцію
+        run: python ci/apply_migration.py
+      - name: Запустити REST API тести
+        run: python -m pytest tests/rest_api -v --junitxml=reports/api.xml
+      - name: Підсумок у Job Summary
+        if: always()
+        run: python ci/junit_summary.py "REST API тести" reports/api.xml
+      - name: Зберегти JUnit-звіт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-api
+          path: reports/api.xml
+          if-no-files-found: warn
+
+  regression:
+    name: regression (smoke + повний набір)
+    needs: unit
+    runs-on: ubuntu-latest
+    env:
+      REGRESSION_DB: local
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: rental_student
+          POSTGRES_PASSWORD: student
+          POSTGRES_DB: rental_variant03_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rental_student -d rental_variant03_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - run: python -m pip install -r requirements-ci.txt
+      - name: Застосувати міграцію
+        run: python ci/apply_migration.py
+      - name: Smoke
+        run: python -m pytest tests/regression -m smoke -v --junitxml=reports/smoke.xml
+      - name: Повний regression
+        run: python -m pytest tests/regression -m regression -v --junitxml=reports/regression.xml
+      - name: Підсумок у Job Summary
+        if: always()
+        run: python ci/junit_summary.py "Regression" reports/smoke.xml reports/regression.xml
+      - name: Зберегти JUnit-звіти
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-regression
+          path: reports/*.xml
+          if-no-files-found: warn
