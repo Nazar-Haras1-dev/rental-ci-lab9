@@ -1,6 +1,3 @@
-# Лаба 9. CI для SUT B «Прокат обладнання», варіант 03.
-# Pipeline: build -> unit -> integration / api / regression (останні три паралельно, після unit).
-name: CI
 
 on:
   push:

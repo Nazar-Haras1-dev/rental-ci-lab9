@@ -6,7 +6,6 @@ from pathlib import Path
 
 import psycopg
 
-# скрипт лежить у ci/, тому додаємо корінь проєкту, щоб працював `import rental`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rental.database import connect
